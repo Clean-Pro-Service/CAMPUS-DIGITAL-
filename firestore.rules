@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() {
+      return request.auth != null;
+    }
+
+    // Administrateurs CAMPUS DIGITAL : liste blanche d'e-mails.
+    // Garder ces comptes sécurisés avec un mot de passe fort.
+    function admin() {
+      return signed()
+        && request.auth.token.email != null
+        && request.auth.token.email in ['tameclor@gmail.com', 'rtameclo@gmail.com'];
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function premium() {
+      return signed()
+        && exists(userPath())
+        && get(userPath()).data.subscriptionStatus == 'active'
+        && get(userPath()).data.subscriptionExpiresAt is timestamp
+        && get(userPath()).data.subscriptionExpiresAt > request.time;
+    }
+
+    match /users/{uid} {
+      allow read: if signed() && (request.auth.uid == uid || admin());
+      allow create: if signed() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['nom', 'email', 'createdAt'])
+        && request.resource.data.email == request.auth.token.email;
+      allow update: if signed() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nom', 'telephone']);
+      allow write: if admin();
+    }
+
+    match /formations/{id} {
+      allow read: if admin() || premium() || resource.data.isPremium == false;
+      allow create, update, delete: if admin();
+    }
+
+    match /ressources/{id} {
+      allow read: if admin() || premium() || resource.data.isPremium == false;
+      allow create, update, delete: if admin();
+    }
+
+    match /bourses/{id} {
+      allow read: if true;
+      allow create, update, delete: if admin();
+    }
+
+    match /demandes_activation/{id} {
+      allow create: if signed()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'reference', 'operateur', 'statut', 'createdAt'])
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.statut == 'en_attente';
+      allow read: if signed() && (resource.data.uid == request.auth.uid || admin());
+      allow update, delete: if admin();
+    }
+  }
+}
